@@ -1,0 +1,261 @@
+---
+title: "Feature Engineering Ideas"
+author: "Metodi Latinov"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    theme: cerulean
+    highlight: tango
+    df_print: tibble
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+library(tidyverse)
+
+data <- readr::read_csv("C:/Users/Huawei/OneDrive/Predict Calorie Expenditure/Predict-Calorie-Expenditure/data/train.csv",n_max = 5000)
+
+```
+
+# Feature Enginnering
+
+
+## 1 BMI (Body Mass Index)
+
+BMI is a measurement of a person's leanness or corpulence based on their height and weight, and is intended to quantify tissue mass. It is widely used as a general indicator of whether a person has a healthy body weight for their height. Specifically, the value obtained from the calculation of BMI is used to categorize whether a person is underweight, normal weight, overweight, or obese depending on what range the value falls between.
+
+$$
+BMI = weight (kg) / height² (meters)
+$$
+
+```{r}
+data <- data %>%
+  mutate(
+    bmi = Weight / (Height/100)^2
+  )
+```
+
+### BMI table for adults
+
+This is the World Health Organization's (WHO) recommended body weight based on BMI values for adults. It is used for both men and women, age 20 or older.
+
+Classification	BMI range - kg/m2
+
+- 1 Severe Thinness	   < 16
+- 2 Moderate Thinness	 16 - 17
+- 3 Mild Thinness	     17 - 18.5
+- 4 Normal          	 18.5 - 25
+- 5 Overweight	       25 - 30
+- 6 Obese Class I	     30 - 35
+- 7 Obese Class II	   35 - 40
+- 8 Obese Class III	   > 40
+
+```{r}
+data <- data %>%
+  mutate(
+    classification_BMI = case_when(
+      bmi < 16 ~ "Severe Thinness",
+      bmi >= 16 & bmi < 17 ~ "Moderate Thinness",
+      bmi >= 17 & bmi < 18.5 ~ "Mild Thinness",
+      bmi >= 18.5 & bmi < 25 ~ "Normal",
+      bmi >= 25 & bmi < 30 ~ "Overweight",
+      bmi >= 25 & bmi < 35 ~ "Obese_Class_I",
+      bmi >= 35 & bmi < 40 ~ "Obese Class_II",
+      bmi >= 40 ~ "Obese Class III",
+      )
+  )
+```
+
+## BMI prime 
+
+BMI prime is the ratio of a person's measured BMI to the upper limit of BMI that is considered "normal," by institutions such as the WHO and the CDC. Though it may differ in some countries, such as those in Asia, this upper limit, which will be referred to as BMIupper is 25 kg/m2
+
+The BMI prime formula is:
+$$
+BMI_{prime} = \frac{BMI}{25}
+$$
+Classification BMI Prime:
+
+- 1 Severe Thinness	    < 0.64
+- 2 Moderate Thinness 	0.64 - 0.68
+- 3 Mild Thinness	      0.68 - 0.74
+- 4 Normal		          0.74 - 1
+- 5 Overweight 	1       1 - 1.2
+- 6 Obese Class I		    1.2- 1.4
+- 7 Obese Class II	  	1.4 - 1.6
+- 8 Obese Class III	  	> 1.6
+
+```{r}
+data <- data %>%
+  mutate(
+    bmi_prime = bmi / 25,
+    classification_BMI_Prime = case_when(
+      bmi_prime < 0.64 ~ "Severe_Thinness_prime",
+      bmi_prime >= 0.64 & bmi_prime < 0.68 ~ "Moderate_Thinness_prime",
+      bmi_prime >= 0.68 & bmi_prime < 0.74 ~ "Mild_Thinness_prime",
+      bmi_prime >= 0.74 & bmi_prime < 1 ~ "Normal_prime",
+      bmi_prime >= 1 & bmi_prime < 1.2 ~ "Overweight_1_prime",
+      bmi_prime >= 1.2 & bmi_prime < 1.4 ~ "Obese_Class_I_prime",
+      bmi_prime >= 1.4 & bmi_prime < 1.6 ~ "Obese_Class_II_prime",
+      bmi_prime >= 1.6 ~ "Obese_Class_III_prime"
+    )
+    )
+```
+
+
+## Ponderal Index
+
+The Ponderal Index (PI) is similar to BMI in that it measures the leanness or corpulence of a person based on their height and weight. The main difference between the PI and BMI is the cubing rather than squaring of the height in the formula (provided below). While BMI can be a useful tool when considering large populations, it is not reliable for determining leanness or corpulence in individuals. Although the PI suffers from similar considerations, the PI is more reliable for use with very tall or short individuals, while BMI tends to record uncharacteristically high or low body fat levels for those on the extreme ends of the height and weight spectrum.
+
+The Ponderal Index formula is:
+
+$$
+PI = \frac{\text{Mass (kg)}}{\text{Height (m)}^3}
+$$
+
+Classification PI:
+
+- 1 Severe Thinness	    < 9
+- 2 Moderate Thinness 	9 - 9.5
+- 3 Mild Thinness	      9.5 - 11
+- 4 Normal		          11 - 15
+- 5 Overweight 	1       15 - 17.5
+- 6 Obese Class I		    17.5 - 20.5
+- 7 Obese Class II	  	20.5 - 23.5
+- 8 Obese Class III	  	> 23.5
+
+```{r}
+data <- data %>%
+  mutate(
+    ponderal_index = Weight / (Height/100)^3,
+    classification_PI = case_when(
+      ponderal_index < 9 ~ "Severe_Thinness_prime",
+      ponderal_index >= 9 & ponderal_index < 9.5 ~ "Moderate_Thinness_pi",
+      ponderal_index >= 9.5 & ponderal_index < 11 ~ "Mild_Thinness_pi",
+      ponderal_index >= 11 & ponderal_index < 15 ~ "Normal_pi",
+      ponderal_index >= 15 & ponderal_index < 17.5 ~ "Overweight_1_pi",
+      ponderal_index >= 17.5 & ponderal_index < 20.5 ~ "Obese_Class_I_pi",
+      ponderal_index >= 20.5 & ponderal_index < 23.5 ~ "Obese_Class_II_pi",
+      ponderal_index >= 23.5 ~ "Obese_Class_III_prime"
+    )
+  )
+```
+
+## BSA (Body Surface Area)
+
+BSA is often used in clinical purposes over body weight because it is a more accurate indicator of metabolic mass (the body's need for energy). Metabolic mass can be estimated using fat-free mass, where fat-free mass is all of a person's body mass that does not include fat. This includes bones, tendons, inner organs, muscles, blood, nerves, and more. Since body fat is not metabolically active and fat-free mass excludes body fat, fat-free mass is a reasonable estimate of metabolic mass. BSA is represented in m2
+
+Du Bois formula :
+
+$$
+{\displaystyle {BSA}=0.007184\times W^{0.425}\times H^{0.725}}
+$$
+```{r}
+data <- data %>%
+  mutate(
+    bsa = 0.007184 * Weight^0.425 * Height^0.725
+  )
+```
+
+## Calories Burned By Heart Rate in Theory
+
+The Keytel formula estimates calories burned per minute during exercise based on your heart rate, age, weight, and sex. It does not require HRmax. Instead, it uses your measured heart rate to calculate actual energy expenditure, making it useful for real-time or post-workout calorie estimates Only useful with a heart rate between 90 and 150
+
+The Keytel formula for Woman :
+
+$$
+\text{Calories} = \left( \frac{-20.4022 + (0.4472 \times HR) - (0.1263 \times W) + (0.074 \times A)}{4.184} \right) \times 60 \times T
+$$
+
+The Keytel formula for Men :
+
+$$
+\text{Calories} = \left( \frac{-55.0969 + (0.6309 \times HR) - (0.1988 \times W) + (0.2017 \times A)}{4.184} \right) \times 60 \times T
+$$
+Where:  
+- \( HR \) = average heart rate (beats per minute)  
+- \( W \) = weight in kilograms  
+- \( A \) = age in years  
+- \( T \) = duration of exercise in hours
+
+```{r}
+data <- data %>%
+  mutate(
+    keytel_theoretical = case_when(
+      Sex == "female" ~ 
+        ((-20.4022 + (0.4472 * Heart_Rate) - 
+          (0.1263 * Weight) + (0.074 * Age)) / 4.184) * Duration,
+      
+      Sex == "male" ~ 
+        ((-55.0969 + (0.6309 * Heart_Rate) - 
+          (0.1988 * Weight) + (0.2017 * Age)) / 4.184) * Duration
+    )
+  )
+
+```
+
+## VO2 max 
+
+VO2 max is the maximum amount of oxygen that an individual can utilize during intense or maximal exercise
+
+Heart Rate-based VO2max Estimation Formula:
+
+$$
+\text{VO2max} = 15 \times \left( \frac{\text{HRmax}}{\text{Resting HR}} \right)
+$$
+Where:
+
+- **HRmax** is estimated as  :
+
+$$
+\text{HRmax (beats/minute)} = 208 - (0.7 \times \text{Age})
+$$
+- **Resting HR** is the resting heart rate measured at rest (Assumtions) ~ 80bpm.
+
+This method uses Heart Rate (HR) and Age to estimate VO2max. It's based on the assumption
+that higher heart rates during exercise indicate lower VO2max.
+
+```{r}
+data <- data %>%
+  mutate(
+    hr_max = 208 - (0.7 * Age),
+    vo2_max = 15 * (hr_max / 80)
+  )
+```
+
+## Calories burned formulas based on a metabolic equation model using Vo2max
+
+For Men :
+$$
+\text{Calories burned} = \left(\frac{-95.7735 + (0.634 \times \text{HR}) + (0.404 \times \text{VO2max}) + (0.394 \times \text{W}) + (0.271 \times \text{A})}{4.184}\right) \times 60 \times T
+\
+$$
+
+For Woman :
+
+$$
+\text{Calories burned} = \left(\frac{-59.3954 + (0.45 \times \text{HR}) + (0.380 \times \text{VO2max}) + (0.103 \times \text{W}) + (0.274 \times \text{A})}{4.184}\right) \times 60 \times T
+\
+$$
+
+```{r}
+data <- data %>%
+  mutate(
+    metabolic_vo2_cal = case_when(
+      Sex == "male" ~
+        ((-95.7735 + (0.634 * Heart_Rate) + (0.404 * vo2_max) + 
+          (0.394 * Weight) + (0.271 * Age)) / 4.184) * Duration,
+      Sex == "female" ~
+        ((-59.3954 + (0.634 * Heart_Rate) + (0.380 * vo2_max ) + 
+          (0.103 * Weight) + (0.274 * Age)) / 4.184) * Duration
+    )
+  )
+```
+
+
