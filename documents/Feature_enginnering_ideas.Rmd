@@ -259,3 +259,116 @@ data <- data %>%
 ```
 
 
+## The metabolic equivalent of task (MET) 
+
+The Metabolic Equivalent of Task is a measure that assesses an individual's energy expenditure during various physical activities. It expresses the energy cost of physical activities relative to energy expended at rest. One MET corresponds to an energy expenditure of 1 kcal/kg/hour or an oxygen uptake of 3.5 ml/kg/min
+
+$$
+\text{MET} = \frac{\text{VO}_2 \ (\text{ml/kg/min})}{3.5}
+$$
+To estimate the oxygen consumption at a given effort level using Vo2max:
+
+$$
+\text{VO}_2 = \text{VO}_{2\text{max}} \times \%\text{Effort}
+$$
+The percentage of effort during exercise can be estimated using the heart rate reserve formula:
+
+$$
+\%\text{Effort} = \frac{\text{HR}_{\text{exercise}} - \text{HR}_{\text{rest}}}{\text{HR}_{\text{max}} - \text{HR}_{\text{rest}}}
+$$
+The calories burned per minute can be estimated with the following formula:
+
+$$
+\text{Calories Burned (per minute)} = \text{MET} \times \text{Weight (kg)} \times 0.0175
+$$
+
+To calculate the **total calories burned** in a workout session:
+
+$$
+\text{Total Calories} = \text{MET} \times \text{Weight (kg)} \times 0.0175 \times \text{Duration (min)}
+$$
+```{r}
+data <- data %>%
+  mutate(
+    effort = (Heart_Rate - 80) / (hr_max - 80),
+    vo2 = vo2_max * effort,
+    met = vo2 / 3.5,
+    calories_met_estimation = met * Weight * 0.0175 * Duration
+  )
+```
+
+
+## Basic Thermodynamics
+
+During exercise, the human body is only about **20–25% mechanically efficient**, meaning that **75–80% of energy is lost as heat**. The energy expenditure (calories burned) based on temperature rise can be estimated as:
+
+$$
+\text{Calories} = \frac{\Delta T \times m \times c}{\text{Efficiency}}
+$$
+Where:
+
+- $\Delta T$ = Change in core temperature (°C)  
+- $m$ = Body mass (kg)  
+- $c$ = Specific heat capacity of the human body (≈ 3.47 kJ/kg/°C or 0.83 kcal/kg/°C)  
+- $\text{Efficiency}$ = Mechanical efficiency, typically between 0.20 and 0.25
+
+Limitations:
+
+Assumes perfect heat retention (no sweating/convection).
+
+Doesn’t separate exercise heat from environmental factors.
+
+```{r}
+data <- data %>%
+  mutate(
+    delta_t = Body_Temp - 37,
+    cal_thermodynamics = (delta_t * Weight * 0.83) / 0.25
+  )
+```
+
+
+## Integrating Metabolic Rate 
+
+Core body temperature correlates with metabolic rate. The **Q10 effect** suggests that metabolism approximately **doubles for every 10°C increase in temperature**. This can be used to estimate calorie burn during elevated core temperatures:
+
+$$
+\text{Calories per minute} = \text{BMR}_{\text{adjusted}} \times 2^{\frac{T_{\text{core}} - 37}{10}}
+$$
+
+Where:
+
+- $\text{BMR}_{\text{adjusted}}$ = Basal Metabolic Rate in kcal/min  
+  (e.g., ~1 kcal/min for a 70 kg person)  
+- $T_{\text{core}}$ = Core body temperature in °C  
+
+Calculate BMR (Mifflin-St Jeor Equation) with the formula :
+
+### For Males:
+
+$$
+\text{BMR}_{\text{male}} = (10 \times \text{weight}) + (6.25 \times \text{height}) - (5 \times \text{age}) + 5
+$$
+
+### For Females:
+
+$$
+\text{BMR}_{\text{female}} = (10 \times \text{weight}) + (6.25 \times \text{height}) - (5 \times \text{age}) - 161
+$$
+ Apply Q10 Effect to Exercise with :
+
+$$
+\text{Exercise Calories/min} = \text{BMR} \times \left(2^{(T_{\text{core}} - 37)/10} - 1\right)
+$$
+
+```{r}
+data <- data %>%
+  mutate(
+    bmr = case_when(
+      Sex == "male" ~ (10 * Weight) + (0.25 * Height) - (5 * Age) + 5,
+      Sex == "female" ~ (10 * Weight) + (0.25 * Height) - (5 * Age) - 161),
+   calculate_metabolic_cals =  bmr * (2^((Body_Temp - 37)/10) - 1) * Duration
+  )
+```
+
+
+
