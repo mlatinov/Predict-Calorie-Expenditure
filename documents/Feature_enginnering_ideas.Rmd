@@ -37,6 +37,7 @@ $$
 ```{r}
 data <- data %>%
   mutate(
+    # BMI Calculation
     bmi = Weight / (Height/100)^2
   )
 ```
@@ -45,7 +46,7 @@ data <- data %>%
 
 This is the World Health Organization's (WHO) recommended body weight based on BMI values for adults. It is used for both men and women, age 20 or older.
 
-Classification	BMI range - kg/m2
+Classification BMI range - kg/m2
 
 - 1 Severe Thinness	   < 16
 - 2 Moderate Thinness	 16 - 17
@@ -59,6 +60,8 @@ Classification	BMI range - kg/m2
 ```{r}
 data <- data %>%
   mutate(
+    
+    # Classification BMI
     classification_BMI = case_when(
       bmi < 16 ~ "Severe Thinness",
       bmi >= 16 & bmi < 17 ~ "Moderate Thinness",
@@ -94,7 +97,11 @@ Classification BMI Prime:
 ```{r}
 data <- data %>%
   mutate(
+    
+    # The BMI prime calculation
     bmi_prime = bmi / 25,
+    
+    # Classification BMI Prime
     classification_BMI_Prime = case_when(
       bmi_prime < 0.64 ~ "Severe_Thinness_prime",
       bmi_prime >= 0.64 & bmi_prime < 0.68 ~ "Moderate_Thinness_prime",
@@ -107,7 +114,6 @@ data <- data %>%
     )
     )
 ```
-
 
 ## Ponderal Index
 
@@ -133,7 +139,11 @@ Classification PI:
 ```{r}
 data <- data %>%
   mutate(
+    
+    # Ponderal Index
     ponderal_index = Weight / (Height/100)^3,
+    
+    # Classification PI
     classification_PI = case_when(
       ponderal_index < 9 ~ "Severe_Thinness_prime",
       ponderal_index >= 9 & ponderal_index < 9.5 ~ "Moderate_Thinness_pi",
@@ -159,6 +169,7 @@ $$
 ```{r}
 data <- data %>%
   mutate(
+    # Du Bois formula for BSA :
     bsa = 0.007184 * Weight^0.425 * Height^0.725
   )
 ```
@@ -187,6 +198,8 @@ Where:
 ```{r}
 data <- data %>%
   mutate(
+    
+    # The Keytel formula Burned By Heart Rate in Theory
     keytel_theoretical = case_when(
       Sex == "female" ~ 
         ((-20.4022 + (0.4472 * Heart_Rate) - 
@@ -198,6 +211,10 @@ data <- data %>%
     )
   )
 
+```
+
+```{r echo=FALSE}
+plot(data$keytel_theoretical,data$Calories)
 ```
 
 ## VO2 max 
@@ -224,7 +241,11 @@ that higher heart rates during exercise indicate lower VO2max.
 ```{r}
 data <- data %>%
   mutate(
+    
+    # **HRmax** is estimated as
     hr_max = 208 - (0.7 * Age),
+    
+    # Heart Rate-based VO2max Estimation :
     vo2_max = 15 * (hr_max / 80)
   )
 ```
@@ -247,6 +268,8 @@ $$
 ```{r}
 data <- data %>%
   mutate(
+    
+    # Calories burned formulas based on a metabolic equation model using Vo2max:
     metabolic_vo2_cal = case_when(
       Sex == "male" ~
         ((-95.7735 + (0.634 * Heart_Rate) + (0.404 * vo2_max) + 
@@ -256,6 +279,10 @@ data <- data %>%
           (0.103 * Weight) + (0.274 * Age)) / 4.184) * Duration
     )
   )
+```
+
+```{r echo=FALSE}
+plot(data$metabolic_vo2_cal,data$Calories)
 ```
 
 
@@ -287,16 +314,28 @@ To calculate the **total calories burned** in a workout session:
 $$
 \text{Total Calories} = \text{MET} \times \text{Weight (kg)} \times 0.0175 \times \text{Duration (min)}
 $$
+
 ```{r}
 data <- data %>%
   mutate(
+    
+    # The percentage of effort during exercise can be estimated using the heart rate reserve :
     effort = (Heart_Rate - 80) / (hr_max - 80),
+    
+    # To estimate the oxygen consumption at a given effort level using Vo2max
     vo2 = vo2_max * effort,
+    
+    # Calculate Metabolic Equivalent of Task
     met = vo2 / 3.5,
+    
+    # Calculate the total calories burned in a workout session
     calories_met_estimation = met * Weight * 0.0175 * Duration
   )
 ```
 
+```{r echo=FALSE}
+plot(data$calories_met_estimation,data$Calories)
+```
 
 ## Basic Thermodynamics
 
@@ -321,11 +360,18 @@ Doesn’t separate exercise heat from environmental factors.
 ```{r}
 data <- data %>%
   mutate(
+    
+    # Change in core temperature (°C)
     delta_t = Body_Temp - 37,
+    
+    # Ccalories burned based on temperature rise can be estimated as:
     cal_thermodynamics = (delta_t * Weight * 0.83) / 0.25
   )
 ```
 
+```{r echo=FALSE}
+plot(data$cal_thermodynamics,data$Calories)
+```
 
 ## Integrating Metabolic Rate 
 
@@ -363,12 +409,95 @@ $$
 ```{r}
 data <- data %>%
   mutate(
+    
+    # Calculate BMR (Mifflin-St Jeor Equation)
     bmr = case_when(
       Sex == "male" ~ (10 * Weight) + (0.25 * Height) - (5 * Age) + 5,
       Sex == "female" ~ (10 * Weight) + (0.25 * Height) - (5 * Age) - 161),
+    
+    # Q10 Effect to Exercise with
    calculate_metabolic_cals =  bmr * (2^((Body_Temp - 37)/10) - 1) * Duration
   )
 ```
+
+```{r echo=FALSE}
+plot(data$calculate_metabolic_cals,data$Calories)
+```
+
+## FFMI-Weighted METs
+
+- 1 Lean Mass Drives Metabolic Cost: Muscle tissue consumes more energy during resistance/strength activities than fat mass.
+
+- 2 Standard METs Ignore Body Composition: A 90kg person with 10% body fat (FFMI=24) burns more calories lifting weights than a 90kg person at 25% fat (FFMI=18), even at the same MET.
+
+
+The formula to estimate calories burned from Adjusted MET with FFMI is:
+
+$$
+\text{Calories} = \text{Adjusted MET} \times \text{Weight (kg)} \times \text{Duration (hours)}
+$$
+
+The Adjusted MET is calculated as:
+
+$$
+\text{Adjusted MET} = \text{Base MET} \times \left( \frac{18}{\text{FFMI}} \right)
+$$
+
+The formula for FFMI, adjusted for height, is:
+
+$$
+\text{FFMI} = \frac{\text{Lean Mass (kg)}}{[\text{Height (m)}]^2} + 6.1 \times (1.8 - \text{Height (m)})
+$$
+
+Lean Mass (Fat-Free Mass) is calculated as:
+
+$$
+\text{Lean Mass (kg)} = \text{Weight (kg)} \times (1 - \frac{\text{BFP}}{100})
+$$
+
+Body Fat Percentage (BFP) Formulas from BMI :
+
+For Adult Males:
+
+$$
+\text{BFPmale} = 1.20 \times \text{BMI} + 0.23 \times \text{Age} - 16.2
+$$
+
+For Adult Females:
+
+$$
+\text{BFPfemale} = 1.20 \times \text{BMI} + 0.23 \times \text{Age} - 5.4
+$$
+
+```{r}
+data <- data %>%
+  mutate(
+    
+    # Body Fat Percentage is calculated as
+    bfp = case_when(
+      Sex == "male" ~ 1.20 * bmi + 0.23 * Age - 16.2,
+      Sex == "female" ~ 1.20 * bmi + 0.23 * Age - 5.4
+    ),
+    
+    # Lean Mass (Fat-Free Mass) is calculated as
+    lean_mass_kg = Weight * (1 - (bfp / 100)),
+    
+    # FFMI adjusted for height, is calculated as
+    ffmi = lean_mass_kg / ((Height/100)^2) + 6.1 * (1.8 - (Height/100)),
+    
+    # Adjusted MET is calculated as
+    met_ffmi_adjusted = met * (18 / ffmi),
+    
+    # Estimate calories burned from Adjusted MET with FFMI
+    calories_met_ffmi_adjusted = met_ffmi_adjusted * Weight * (Duration / 60)
+                                                  
+  )
+```
+
+```{r echo=FALSE}
+plot(data$calories_met_ffmi_adjusted,data$Calories)
+```
+
 
 
 
