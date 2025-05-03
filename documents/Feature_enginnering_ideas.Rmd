@@ -259,7 +259,6 @@ $$
 $$
 
 For Woman :
-
 $$
 \text{Calories burned} = \left(\frac{-59.3954 + (0.45 \times \text{HR}) + (0.380 \times \text{VO2max}) + (0.103 \times \text{W}) + (0.274 \times \text{A})}{4.184}\right) \times 60 \times T
 \
@@ -389,18 +388,18 @@ Where:
 
 Calculate BMR (Mifflin-St Jeor Equation) with the formula :
 
-### For Males:
+For Males:
 
 $$
 \text{BMR}_{\text{male}} = (10 \times \text{weight}) + (6.25 \times \text{height}) - (5 \times \text{age}) + 5
 $$
 
-### For Females:
+For Females:
 
 $$
 \text{BMR}_{\text{female}} = (10 \times \text{weight}) + (6.25 \times \text{height}) - (5 \times \text{age}) - 161
 $$
- Apply Q10 Effect to Exercise with :
+Apply Q10 Effect to Exercise with :
 
 $$
 \text{Exercise Calories/min} = \text{BMR} \times \left(2^{(T_{\text{core}} - 37)/10} - 1\right)
