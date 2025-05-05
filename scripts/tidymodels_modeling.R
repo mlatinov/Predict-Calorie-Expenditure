@@ -241,12 +241,12 @@ workfow_tuning_set <- workflow_set(
     random_forest = ranger_model
   )
 )
-
 ## Light tune for all the models with tune_race_anova
 workflow_map_light_tune <- workflow_map(
   object = workfow_tuning_set,
   fn = "tune_race_anova",
   grid = 20,
+  resamples = vfold_cv(data = validation_data,v = 5),
   verbose = TRUE,
   seed = 123)
 
