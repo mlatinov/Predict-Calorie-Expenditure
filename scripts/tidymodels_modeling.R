@@ -2,6 +2,7 @@
 #### Libraries ####
 library(tidymodels)
 library(baguette)
+library(finetune)
 library(tidyverse)
 library(rules)
 
@@ -159,7 +160,8 @@ recipe_eng <- recipe(Calories ~ .,data = train_data) %>%
     met_ffmi_adjusted = met * (18 / ffmi),
     
     # Estimate calories burned from Adjusted MET with FFMI
-    calories_met_ffmi_adjusted = met_ffmi_adjusted * Weight * (Duration / 60) %>%
+    calories_met_ffmi_adjusted = met_ffmi_adjusted * Weight * (Duration / 60)
+    ) %>%
   
   # Trasform all numeric features
   step_YeoJohnson(all_numeric_predictors()) %>%
@@ -174,7 +176,7 @@ recipe_eng <- recipe(Calories ~ .,data = train_data) %>%
   step_corr(all_numeric_predictors(), threshold = 0.9,trained = TRUE) %>%
   
   # Encode all categorical features
-  step_dummy(all_nominal_predictors(),one_hot = TRUE))
+  step_dummy(all_nominal_predictors(),one_hot = TRUE)
 
 #### Model Specifications ####
 
@@ -182,7 +184,8 @@ recipe_eng <- recipe(Calories ~ .,data = train_data) %>%
 ranger_model <- rand_forest(
   mtry = tune(), # Randomly Selected Predictors
   trees = 500,
-  min_n = tune())%>%
+  min_n = tune()
+  )%>%
   set_mode("regression")%>%
   set_engine("ranger")
 
@@ -200,30 +203,25 @@ xgb_model <- boost_tree(
   set_engine("xgboost")
 
 # Elastic Net regression (L1 and L2 penalties)
-linear_reg <- linear_reg(mixture = tune(),penalty = tune())%>%
-  set_mode("regression")%>%
-  set_engine("lm")
-
-# Generalized additive model
-gam_model <- gen_additive_mod(
-  select_features = TRUE,
-  adjust_deg_free = tune() # Smoothness Adjustment 
-  )%>%
-  set_mode("regression")%>%
-  set_engine("mgcv")
+elastic_net_model <- linear_reg(
+  penalty = tune(),       # strength of regularization
+  mixture = tune()        # 0 = ridge, 1 = lasso, in between = elastic net
+  ) %>%
+  set_mode("regression") %>%
+  set_engine("glmnet")
 
 # Cubist rule-based regression models
 cubist_model <- cubist_rules(
   committees = tune(), # Number of model ensembles
-  neighbors = tune(), # Instance-based correction
-  max_rules = tune() # The largest number of rules.
+  neighbors = tune(),  # Instance-based correction
+  max_rules = tune()   # The largest number of rules.
   )%>%
   set_mode("regression")%>%
   set_engine("Cubist")
 
 # Bagged MARS 
 bagged_mars <- bag_mars(
-  num_terms = tune(), # The number of features that will be retained in the final model
+  num_terms = tune(),  # The number of features that will be retained in the final model
   prod_degree = tune() # Degree of Interaction
   )%>%
   set_mode("regression")%>%
@@ -235,18 +233,28 @@ workfow_tuning_set <- workflow_set(
   models = list(
     bag_mars = bagged_mars,
     cubist_model = cubist_model,
-    Gam = gam_model,
-    elastic_net = linear_reg,
+    elastic_net = elastic_net_model,
     xgb_model = xgb_model,
     random_forest = ranger_model
   )
 )
 ## Light tune for all the models with tune_race_anova
+
+# Control Race 
+control_anova <- control_race(
+  randomize = TRUE,
+  burn_in = 3, # The minimum number of resamples before we start eliminating the worst ones
+  verbose = TRUE, 
+  save_workflow = TRUE,
+  save_pred = TRUE)
+
+# Execute the Workflow_map tuning
 workflow_map_light_tune <- workflow_map(
   object = workfow_tuning_set,
   fn = "tune_race_anova",
   grid = 20,
   resamples = vfold_cv(data = validation_data,v = 5),
+  control = control_anova,
   verbose = TRUE,
   seed = 123)
 
