@@ -4,13 +4,24 @@ library(tidymodels)
 library(baguette)
 library(finetune)
 library(tidyverse)
+library(DALEX)
 library(rules)
 
 ## Load the data 
 data <- read_csv("data/train.csv")
 
+# Bucket a numeric vector into n groups and sample 10% of each group 
+sample_data <- data %>%
+  mutate(
+    strata = ntile(Calories,n = 50)
+  ) %>%
+  group_by(strata) %>%
+  sample_frac(size = 0.1) %>%
+  ungroup() %>%
+  select(-strata)
+  
 # Split the data 
-split <- initial_validation_split(data = data)
+split <- initial_validation_split(data = sample_data)
 
 # Train data
 train_data <- training(split)
@@ -172,8 +183,8 @@ recipe_eng <- recipe(Calories ~ .,data = train_data) %>%
   # Center all Numeric Features
   step_center(all_numeric_predictors()) %>%
   
-  # Remove highly correlated features
-  step_corr(all_numeric_predictors(), threshold = 0.9,trained = TRUE) %>%
+  # Convert char into factors
+  step_string2factor(all_nominal_predictors()) %>%
   
   # Encode all categorical features
   step_dummy(all_nominal_predictors(),one_hot = TRUE)
@@ -229,7 +240,7 @@ bagged_mars <- bag_mars(
 
 ## Create a workflow set
 workfow_tuning_set <- workflow_set(
-  preproc = list(original = recipe_ori,engineered = recipe_eng),
+  preproc = list(engineered = recipe_eng,original = recipe_ori),
   models = list(
     bag_mars = bagged_mars,
     cubist_model = cubist_model,
@@ -238,12 +249,58 @@ workfow_tuning_set <- workflow_set(
     random_forest = ranger_model
   )
 )
-## Light tune for all the models with tune_race_anova
+### Light tune for all the models with tune_race_anova
+
+##  Create a custom metric RMSLE
+rmsle_vec <- function(truth, estimate, na_rm = TRUE, ...) {
+  rmsle_impl <- function(truth, estimate) {
+    
+    # Ensure values are positive 
+    truth <- pmax(truth, 0)
+    estimate <- pmax(estimate, 0)
+    
+    # Calc
+    log_truth <- log1p(truth)
+    log_estimate <- log1p(estimate)
+    squared_errors <- (log_truth - log_estimate)^2
+    mean_squared_error <- mean(squared_errors)
+    sqrt(mean_squared_error)
+  }
+  # Template
+  yardstick::metric_vec_template(
+    metric_impl = rmsle_impl,
+    truth = truth,
+    estimate = estimate,
+    na_rm = na_rm,
+    cls = "numeric",
+    ...
+  )
+}
+
+# Define RMSLE
+rmsle <- function(data, truth, estimate, na_rm = TRUE, ...) {
+  yardstick::metric_summarizer(
+    metric_nm = "rmsle",
+    metric_fn = rmsle_vec,
+    data = data,
+    truth = !!rlang::enquo(truth),
+    estimate = !!rlang::enquo(estimate),
+    na_rm = na_rm,
+    ...
+  )
+}
+
+# Register as yardstick metric
+attr(rmsle, "direction") <- "minimize"
+class(rmsle) <- c("numeric_metric", "metric", "function")
+
+# Use in metric_set
+custom_rmsle <- yardstick::metric_set(rmsle)
 
 # Control Race 
 control_anova <- control_race(
   randomize = TRUE,
-  burn_in = 3, # The minimum number of resamples before we start eliminating the worst ones
+  burn_in = 3, # The minimum number of resamples before eliminating the worst ones
   verbose = TRUE, 
   save_workflow = TRUE,
   save_pred = TRUE)
@@ -253,10 +310,62 @@ workflow_map_light_tune <- workflow_map(
   object = workfow_tuning_set,
   fn = "tune_race_anova",
   grid = 20,
+  metrics = custom_rmsle,
   resamples = vfold_cv(data = validation_data,v = 5),
   control = control_anova,
   verbose = TRUE,
   seed = 123)
 
+metrics <- collect_metrics(workflow_map_light_tune)
 
+## Select best performance engineered models
+best_bagged_mars <- workflow_map_light_tune %>% extract_workflow_set_result("engineered_bag_mars") %>%
+  select_best()
 
+best_cubist_model <- workflow_map_light_tune %>% extract_workflow_set_result("engineered_cubist_model") %>%
+  select_best()
+
+best_xgb_model <- workflow_map_light_tune %>% extract_workflow_set_result("engineered_xgb_model") %>%
+  select_best()
+
+best_random_forest <- workflow_map_light_tune %>% extract_workflow_set_result("engineered_random_forest") %>%
+  select_best()
+
+## Finalize the Models
+bagged_mars_final <- bagged_mars %>% finalize_model(best_bagged_mars)
+cubist_model_final <- cubist_model %>% finalize_model(best_cubist_model)
+xgb_model_final <- xgb_model %>% finalize_model(best_xgb_model)
+xgb_random_forest <- xgb_model %>% finalize_model(best_random_forest)
+
+## Create Workflows
+bagged_mars_workflow <- workflow()%>%
+  add_model(bagged_mars_final) %>%
+  add_recipe(recipe_eng)
+
+## Fit the models
+bagged_mars_fit <- fit(bagged_mars_workflow,data = train_data)
+
+#### Dataset level Exploration ####
+
+# Create a preped recipe
+preped_recipe <- prep(recipe_eng, training = train_data)
+
+# Bake the recipe to the test 
+test_data_processed <- bake(preped_recipe, new_data = test_data)
+
+# Define a safe predict function that handles the preprocessing
+tidymodels_predict <- function(model, new_data) {
+  # Apply the same preprocessing
+  processed_data <- bake(preped_recipe, new_data)
+  # Make predictions
+  predict(model, processed_data)$.pred
+}
+
+# Create the explainer with processed data
+mars_explainer <- DALEX::explain(
+  model = bagged_mars_fit,
+  data = test_data_processed %>% select(-Calories), 
+  y = test_data_processed$Calories,
+  predict_function = tidymodels_predict,
+  label = "Bagged Mars Model"
+)
