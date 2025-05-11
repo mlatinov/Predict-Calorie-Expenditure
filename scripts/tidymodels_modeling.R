@@ -8,16 +8,18 @@ library(DALEX)
 library(rules)
 library(patchwork)
 
+tidymodels_prefer()
+
 ## Load the data 
 data <- read_csv("data/train.csv")
 
-# Bucket a numeric vector into n groups and sample 10% of each group 
+# Bucket a numeric vector into n groups and sample 30% of each group 
 sample_data <- data %>%
   mutate(
     strata = ntile(Calories,n = 50)
   ) %>%
   group_by(strata) %>%
-  sample_frac(size = 0.1) %>%
+  sample_frac(size = 0.3) %>%
   ungroup() %>%
   select(-strata)
   
@@ -41,6 +43,9 @@ recipe_ori <- recipe(Calories ~ .,data = train_data) %>%
   # Remove Id from the preprocessing and modeling
   update_role(id,new_role = "id") %>%
   
+  # log transform the target 
+  step_log(Calories, base = exp(1)) %>%
+  
   # Remove near-zero var features
   step_nzv(all_nominal_predictors())%>%
   
@@ -54,7 +59,7 @@ recipe_ori <- recipe(Calories ~ .,data = train_data) %>%
   step_center(all_numeric_predictors()) %>%
   
   # Encode all categorical features
-  step_dummy(all_nominal_predictors(),one_hot = TRUE)
+  step_dummy(all_nominal_predictors())
 
 ## Feature Engineering
 recipe_eng <- recipe(Calories ~ .,data = train_data) %>%
@@ -148,17 +153,17 @@ recipe_eng <- recipe(Calories ~ .,data = train_data) %>%
     lean_mass_kg = Weight * (1 - (bfp / 100)),
     
     # FFMI adjusted for height, is calculated as
-    ffmi = lean_mass_kg / ((Height/100)^2) + 6.1 * (1.8 - (Height/100)),
+    ffmi = lean_mass_kg / ((Height/100)^2) + 6.1 * pmax(0, 1.8 - (Height/100)),
     
     # Adjusted MET is calculated as
-    met_ffmi_adjusted = met * (18 / ffmi),
+    met_ffmi_adjusted = met * (1 + 18 / ffmi),
     
     # Estimate calories burned from Adjusted MET with FFMI
     calories_met_ffmi_adjusted = met_ffmi_adjusted * Weight * (Duration / 60)
     
     ) %>%
   
-  # Trasform all numeric features
+  # Transform all numeric features
   step_YeoJohnson(all_numeric_predictors()) %>%
   
   # Scale all Numerical Features
@@ -197,14 +202,6 @@ xgb_model <- boost_tree(
   set_mode("regression")%>%
   set_engine("xgboost")
 
-# Elastic Net regression (L1 and L2 penalties)
-elastic_net_model <- linear_reg(
-  penalty = tune(),       # strength of regularization
-  mixture = tune()        # 0 = ridge, 1 = lasso, in between = elastic net
-  ) %>%
-  set_mode("regression") %>%
-  set_engine("glmnet")
-
 # Cubist rule-based regression models
 cubist_model <- cubist_rules(
   committees = tune(), # Number of model ensembles
@@ -214,31 +211,13 @@ cubist_model <- cubist_rules(
   set_mode("regression")%>%
   set_engine("Cubist")
 
-# Bagged MARS 
-bagged_mars <- bag_mars(
-  num_terms = tune(),  # The number of features that will be retained in the final model
-  prod_degree = tune() # Degree of Interaction
-  )%>%
-  set_mode("regression")%>%
-  set_engine("earth")
-
-# Bagged neural networks
-bag_mlp <- bag_mlp(
-  hidden_units = tune(),
-  penalty = tune())%>%
-  set_model_mode("regression")%>%
-  set_engine("nnet")
-
 ## Create a workflow set
 workfow_tuning_set <- workflow_set(
   preproc = list(engineered = recipe_eng,original = recipe_ori),
   models = list(
-    bag_mars = bagged_mars,
     cubist_model = cubist_model,
-    elastic_net = elastic_net_model,
     xgb_model = xgb_model,
     random_forest = ranger_model,
-    bagged_nn = bag_mlp
   )
 )
 ### Light tune for all the models with tune_race_anova
@@ -311,10 +290,17 @@ workflow_map_light_tune <- workflow_map(
 # Collect the metrics
 metrics <- collect_metrics(workflow_map_light_tune)
 
-## Select best performance engineered models
-best_bagged_mars <- workflow_map_light_tune %>% extract_workflow_set_result("engineered_bag_mars") %>%
-  select_best()
+# Plot the result
+metrics %>%
+  mutate(recipe_type = ifelse(str_detect(wflow_id, "^engineered"), "eng", "ori")) %>%
+  group_by(wflow_id, recipe_type) %>%
+  summarise(mean = mean(mean), .groups = "drop") %>%
+  ggplot(aes(x = mean, y = fct_reorder(as.factor(wflow_id),.x = mean,.fun = sum,.desc = TRUE), fill = recipe_type)) +
+  geom_col() +
+  geom_text(aes(label = round(mean, 4)), hjust = -0.1) + 
+  theme_minimal()
 
+## Select best performance engineered models
 best_cubist_model <- workflow_map_light_tune %>% extract_workflow_set_result("engineered_cubist_model") %>%
   select_best()
 
@@ -325,16 +311,11 @@ best_random_forest <- workflow_map_light_tune %>% extract_workflow_set_result("e
   select_best()
 
 ## Finalize the Models
-bagged_mars_finalized <- bagged_mars %>% finalize_model(best_bagged_mars)
 cubist_model_finalized <- cubist_model %>% finalize_model(best_cubist_model)
 xgb_model_finalized <- xgb_model %>% finalize_model(best_xgb_model)
 random_forest_finalized <- ranger_model %>% finalize_model(best_random_forest)
 
 ## Create Workflows
-bagged_mars_workflow <- workflow()%>%
-  add_model(bagged_mars_finalized) %>%
-  add_recipe(recipe_eng)
-
 cubist_model_workflow <- workflow() %>%
   add_model(cubist_model_finalized) %>%
   add_recipe(recipe_eng)
@@ -348,7 +329,6 @@ random_forest_workflow <- workflow() %>%
   add_recipe(recipe_eng)
 
 ## Fit the models
-bagged_mars_fit <- fit(bagged_mars_workflow,data = train_data)
 cubist_model_fit <- fit(cubist_model_workflow,data = train_data)
 xgb_model_fit <- fit(xgb_model_workflow,data = train_data)
 random_forest_fit <- fit(random_forest_workflow,data = train_data)
@@ -359,19 +339,13 @@ test_processed <- bake(final_recipe, new_data = test_data)
 train_processed <- bake(final_recipe, new_data = train_data)
 
 # Extract the the models
-bagged_mars_final <- extract_fit_parsnip(bagged_mars_fit)
 cubist_model_final <- extract_fit_parsnip(cubist_model_fit)
 xgb_model_final <- extract_fit_parsnip(xgb_model_fit)
 random_forest_final <- extract_fit_parsnip(random_forest_fit)
 
 ## Create Explainers 
-mars_explainer <- DALEX::explain(
-  model = bagged_mars_final,
-  data = train_processed %>% select(-Calories),
-  y = train_processed$Calories,
-  label = "Bagged Mars"
-)
 
+# Cubist explainer
 cubist_explainer <- DALEX::explain(
   model = cubist_model_final,
   data = train_processed %>% select(-Calories),
@@ -379,6 +353,7 @@ cubist_explainer <- DALEX::explain(
   label = "Cubist"
 )
 
+# XGB explainer
 xgb_explainer <- DALEX::explain(
   model = xgb_model_final,
   data = train_processed %>% select(-Calories),
@@ -386,6 +361,7 @@ xgb_explainer <- DALEX::explain(
   label = "XGB"
 )
 
+# Random Forest_explainer
 random_forest_explainer <- DALEX::explain(
   model = random_forest_final,
   data = train_processed %>% select(-Calories),
@@ -437,22 +413,6 @@ xgb_model_diag_y_resid <- plot(xgb_model_diag,variable = "y",yvariable = "residu
 xgb_model_diag_y_yhat <- plot(xgb_model_diag,variable = "y",yvariable = "y_hat")+
   geom_abline(slope = 1,intercept = 0,colour = "red")
 
-## MARS
-
-# Performance
-mars_model_perf <- model_performance(mars_explainer)
-mars_perf_p <- plot(mars_model_perf,geom = "histogram")
-
-# Diagnostics
-mars_model_diag <- model_diagnostics(mars_explainer)
-
-# Y against residuals
-mars_model_diag_y_resid <- plot(mars_model_diag,variable = "y",yvariable = "residuals") 
-
-# Y against y_hat
-mars_model_diag_y_hat <- plot(mars_model_diag,variable = "y",yvariable = "y_hat")+
-  geom_abline(slope = 1,intercept = 0,colour = "red")
-
 ## Cubist 
 
 # Performance
@@ -470,21 +430,11 @@ cubist_model_diag_y_yhat <- plot(cubist_model_diag,variable = "y",yvariable = "y
   geom_abline(slope = 1,intercept = 0,colour = "red")
 
 # Plot all the result
-histogram_residuals <- rf_perf_p + xgb_perf_p + mars_perf_p + cubist_model_perf_p
-y_residuals <- cubist_model_diag_y_resid + mars_model_diag_y_resid + xgb_model_diag_y_resid + rf_diag_y_resid
-y_yhat <- cubist_model_diag_y_yhat + mars_model_diag_y_hat + xgb_model_diag_y_yhat + rf_diag_y_yhat
+histogram_residuals <- rf_perf_p + xgb_perf_p  + cubist_model_perf_p
+y_residuals <- cubist_model_diag_y_resid  + xgb_model_diag_y_resid + rf_diag_y_resid
+y_yhat <- cubist_model_diag_y_yhat  + xgb_model_diag_y_yhat + rf_diag_y_yhat
 
 ## Permutation-based variable importance on the train_data
-
-# Mars
-mars_vip_50 <- model_parts(
-  explainer = mars_explainer,
-  type = "variable_importance",
-  B = 50,
-  loss_function = rmsle_loss
-  )
-# Plot the results 
-plot(xgb_vip_50)
 
 # Random Forest
 random_forest_vip_50 <- model_parts(
@@ -493,6 +443,7 @@ random_forest_vip_50 <- model_parts(
   B = 50,
   loss_function = rmsle_loss
   )
+
 # Plot the results 
 plot(random_forest_vip_50)
 
@@ -517,7 +468,7 @@ cubist_vip_50 <- model_parts(
 plot(cubist_vip_50)
 
 # Plot All the results
-plot(random_forest_vip_50,xgb_vip_50,mars_vip_50,cubist_vip_50)+
+plot(random_forest_vip_50,xgb_vip_50,cubist_vip_50)+
   ggtitle("Mean variable-importance over 50 permutations", "") 
 
 ## ALE on the train data
@@ -530,16 +481,6 @@ rf_ale <- model_profile(
 
 # Plot the results
 rf_ale_plot <-plot(rf_ale)
-
-# MARS
-mars_ale <- model_profile(
-  explainer = mars_explainer,
-  type = "accumulated",
-  variables = c("bmi_prime","Height","ponderal_index","bmi","Weight")
-  )
-
-# Plot the results
-mars_ale_plot <- plot(mars_ale)
 
 # XGB
 xgb_ale <- model_profile(
@@ -575,6 +516,8 @@ rf_ibp_high <- predict_parts(
   explainer = random_forest_explainer,
   new_observation = high_cal,
   type = "break_down_interactions")
+
+rf_ibp_high_p <- plot(rf_ibp_high)
 
 # Low Calories
 rf_ibp_low <- predict_parts(
