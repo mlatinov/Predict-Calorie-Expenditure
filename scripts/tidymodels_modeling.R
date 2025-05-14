@@ -7,6 +7,7 @@ library(tidyverse)
 library(DALEX)
 library(rules)
 library(patchwork)
+library(DiceDesign)
 
 tidymodels_prefer()
 
@@ -42,9 +43,6 @@ recipe_ori <- recipe(Calories ~ .,data = train_data) %>%
   
   # Remove Id from the preprocessing and modeling
   update_role(id,new_role = "id") %>%
-  
-  # log transform the target 
-  step_log(Calories, base = exp(1)) %>%
   
   # Remove near-zero var features
   step_nzv(all_nominal_predictors())%>%
@@ -217,7 +215,7 @@ workfow_tuning_set <- workflow_set(
   models = list(
     cubist_model = cubist_model,
     xgb_model = xgb_model,
-    random_forest = ranger_model,
+    random_forest = ranger_model
   )
 )
 ### Light tune for all the models with tune_race_anova
@@ -300,15 +298,248 @@ metrics %>%
   geom_text(aes(label = round(mean, 4)), hjust = -0.1) + 
   theme_minimal()
 
-## Select best performance engineered models
+#### Define a param space ####
+
+## Select top performance engineered models
 best_cubist_model <- workflow_map_light_tune %>% extract_workflow_set_result("engineered_cubist_model") %>%
-  select_best()
+  show_best(n = 1) %>%
+  select(-.metric, -.estimator, -mean, -n, -std_err, -.config)
 
 best_xgb_model <- workflow_map_light_tune %>% extract_workflow_set_result("engineered_xgb_model") %>%
-  select_best()
+  show_best(n = 1) %>%
+  select(-.metric, -.estimator, -mean, -n, -std_err, -.config)
 
 best_random_forest <- workflow_map_light_tune %>% extract_workflow_set_result("engineered_random_forest") %>%
-  select_best()
+  show_best(n = 1) %>%
+  select(-.metric, -.estimator, -mean, -n, -std_err, -.config)
+
+# Cubist
+
+# Initial param space
+cubist_param_space <- parameters(
+  committees(range = range(best_cubist_model$committees) + c(-5, 5)),
+  neighbors(range = c(0, 9)),
+  max_rules(range = range(best_cubist_model$max_rules) + c(-20, 20))
+)
+
+# Get the numeric ranges for each parameter
+param_ranges_cubist <- purrr::map(cubist_param_space$object, function(x) {
+  rng <- dials::range_get(x)
+  as.numeric(rng)
+})
+
+# Convert the list to a data frame with sequences
+param_df_cubist <- data.frame(
+  committees = seq(param_ranges_cubist[[1]][1], param_ranges_cubist[[1]][2], length.out = 10),
+  neighbors = seq(param_ranges_cubist[[2]][1], param_ranges_cubist[[2]][2], length.out = 10),
+  max_rules = seq(param_ranges_cubist[[3]][1], param_ranges_cubist[[3]][2], length.out = 10)
+)
+
+# Normalize the space (rescale between 0 and 1)
+norm_space_cubist <- param_df_cubist %>%
+  mutate(across(everything(), rescale))
+
+# Check for Irregular Coverage (Heuristics)
+dist_matrix <- dist(as.matrix(param_df_cubist))
+cv_dist<- sd(dist_matrix) / mean(dist_matrix) # 0.6098367
+
+# LCH design
+lch_cubust_design <- lhsDesign(n = 30, dimension = 3, randomized = TRUE,seed = 123)$design
+
+# Simulated annealing (SA) routine for Latin Hypercube Sample (LHS) optimization 
+optimized_lch_cubist <- maximinSA_LHS(
+  design = lch_cubust_design,
+  T0=10,                      # The initial temperature of the SA algorithm
+  c=0.99,                     # A constant parameter regulating how the temperature goes down
+  it=1000,                    # The number of iterations
+  profile="GEOM_MORRIS")
+
+# Map the design into the params
+cubist_final_design <- data.frame(
+  committees = param_df_cubist$committees[cut(optimized_lch_cubist$design[,1], 
+                                       breaks = seq(0,1,length=11), 
+                                       labels = FALSE)],
+  neighbors = param_df_cubist$neighbors[cut(optimized_lch_cubist$design[,2], 
+                                     breaks = seq(0,1,length=11), 
+                                     labels = FALSE)],
+  max_rules = param_df_cubist$max_rules[cut(optimized_lch_cubist$design[,3], 
+                                     breaks = seq(0,1,length=11), 
+                                     labels = FALSE)]
+)
+
+# XGB 
+
+# # Initial adaptive ranges from the best configurations
+xgb_initial_param_space <- parameters(
+  
+  # Feature selection
+  mtry(range = c(
+    max(1, floor(best_xgb_model$mtry* 0.5)),  # 50% below
+    min(best_xgb_model$mtry * 2, 15)           # 100% above, max 15
+  )),
+  
+  # Tree structure
+  trees(range = c(
+    max(50, floor(best_xgb_model$trees * 0.7)), # 30% below
+    ceiling(best_xgb_model$trees * 1.5)         # 50% above
+  )),
+  
+  min_n(range = c(
+    max(2, floor(best_xgb_model$min_n * 0.5)),  # 50% below
+    ceiling(best_xgb_model$min_n * 1.5)         # 50% above
+  )),
+  
+  tree_depth(range = c(
+    max(2, best_xgb_model$tree_depth - 3),      # Absolute -3
+    best_xgb_model$tree_depth + 3               # Absolute +3
+  )),
+  
+  # Learning dynamics (log scales)
+  learn_rate(range = c(
+    log10(best_xgb_model$learn_rate) - 1,       # 1 order magnitude below
+    log10(min(0.1, best_xgb_model$learn_rate * 10)) # 1 order above
+  ), trans = log10_trans()),
+  
+  loss_reduction(range = c(
+    log10(best_xgb_model$loss_reduction) - 1,   # 1 order below
+    log10(best_xgb_model$loss_reduction) + 2    # 2 orders above
+  ), trans = log10_trans()),
+  
+  # Sampling
+  sample_prop(range = c(
+    max(0.1, best_xgb_model$sample_size - 0.1), # -0.1 absolute
+    min(0.9, best_xgb_model$sample_size + 0.2)  # +0.2 absolute
+  ))
+)
+  
+# Get the numeric ranges for each parameter
+xgb_param_ranges <- purrr::map(xgb_initial_param_space$object,function(x){
+  rng <- range_get(x)
+  as.numeric(rng)
+})
+
+# Convert the list to a data frame with sequences
+param_df_xgb <- data.frame(
+  mtry = seq(xgb_param_ranges[[1]][1], xgb_param_ranges[[1]][2], length.out = 10),
+  trees = seq(xgb_param_ranges[[2]][1], xgb_param_ranges[[2]][2], length.out = 10),
+  min_n = seq(xgb_param_ranges[[3]][1], xgb_param_ranges[[3]][2], length.out = 10),
+  tree_depth = seq(xgb_param_ranges[[4]][1], xgb_param_ranges[[4]][2], length.out = 10),
+  learn_rate = 10^seq(xgb_param_ranges[[5]][1], xgb_param_ranges[[5]][2], length.out = 10),
+  loss_reduction = 10^seq(xgb_param_ranges[[6]][1], xgb_param_ranges[[6]][2], length.out = 10),
+  sample_prop = seq(xgb_param_ranges[[7]][1], xgb_param_ranges[[7]][2], length.out = 10)
+)
+
+# Create normalized parameter space
+norm_space_xgb <- param_df_xgb %>%
+  mutate(across(everything(),rescale))
+
+# Check for Irregular Coverage (Heuristics)
+dist_matrix <- dist(as.matrix(norm_space_xgb))
+cv_dist_xgb <- sd(dist_matrix) / mean(dist_matrix) #  0.1519956
+
+#  Generate initial LHS design 
+lhc_xgb_initial <- lhsDesign(n = 50,dimension = 7,randomized = TRUE,seed = 123)$design
+
+# Run maximin optimization 
+optimized_lch_xgb <- maximinSA_LHS(
+  design =lhc_xgb_initial,
+  T0=20,                      # The initial temperature of the SA algorithm
+  c=0.95,                     # A constant parameter regulating how the temperature goes down
+  it=2000,                    # The number of iterations
+  profile="GEOM_MORRIS")
+  
+# Map the optimized maxmin LHC 
+xgb_final_design <- data.frame(
+  mtry = param_df_xgb$mtry[findInterval(optimized_lch_xgb$design[,1], 
+                                        seq(0,1,length.out=11))],
+  
+  trees = param_df_xgb$trees[findInterval(optimized_lch_xgb$design[,2],
+                                          seq(0,1,length.out=11))],
+  
+  min_n = param_df_xgb$min_n[findInterval(optimized_lch_xgb$design[,3],
+                                          seq(0,1,length.out=11))],
+  
+  tree_depth = param_df_xgb$tree_depth[findInterval(optimized_lch_xgb$design[,4],
+                                                    seq(0,1,length.out=11))],
+  
+  learn_rate = param_df_xgb$learn_rate[findInterval(optimized_lch_xgb$design[,5],
+                                                    seq(0,1,length.out=11))],
+  
+  loss_reduction = param_df_xgb$loss_reduction[findInterval(optimized_lch_xgb$design[,6],
+                                                            seq(0,1,length.out=11))],
+  
+  sample_size = param_df_xgb$sample_prop[findInterval(optimized_lch_xgb$design[,7],
+                                                      seq(0,1,length.out=11))]
+)
+
+## Check for Irregular Coverage (Heuristics)
+norm_space_xgb <- xgb_final_design %>%
+  mutate(across(everything(),rescale))
+dist_matrix <- dist(as.matrix(norm_space_xgb))
+cv_dist_xgb <- sd(dist_matrix) / mean(dist_matrix) # 0.1869027
+
+## Random Forest 
+
+# Initial adaptive ranges from the best configurations
+rf_param_space <- parameters(
+  mtry(range = c(
+    max(1, floor(min(best_random_forest$mtry) * 0.7)),  # 30% below lowest best
+    ceiling(max(best_random_forest$mtry) * 1.3)         # 30% above highest best
+  )),
+  
+  min_n(range = c(
+    max(1, floor(min(best_random_forest$min_n) * 0.5)), # 50% below lowest best
+    ceiling(max(best_random_forest$min_n) * 1.5)         # 50% above highest best
+  ))
+)
+
+# Get numeric ranges for LHS sampling
+rf_ranges <- map(rf_param_space$object, ~ as.numeric(range_get(.x)))
+
+# Convert the list to a data frame with sequences
+param_df_rf <- data.frame(
+  mtry = seq(rf_ranges[[1]][1], rf_ranges[[1]][2], length.out = 10),
+  min_n = seq(rf_ranges[[2]][1], rf_ranges[[2]][2], length.out = 10)
+)
+
+## Check for Irregular Coverage (Heuristics)
+norm_space_rf <- param_df_rf %>%
+  mutate(across(everything(),rescale))
+dist_matrix <- dist(as.matrix(norm_space_rf))
+cv_dist_rf <- sd(dist_matrix) / mean(dist_matrix) # 0.6098367
+
+#  Generate initial LHS design 
+lhc_rf_initial <- lhsDesign(n = 50,dimension = 2,randomized = TRUE,seed = 123)$design
+
+# Run maximin optimization 
+optimized_lch_rf <- maximinSA_LHS(
+  design =lhc_rf_initial,
+  T0=10,                      # The initial temperature of the SA algorithm
+  c=0.97,                     # A constant parameter regulating how the temperature goes down
+  it=2000,                    # The number of iterations
+  profile="GEOM_MORRIS")
+
+# Map the design into the params
+rf_final_design <- data.frame(
+  mtry = param_df_xgb$mtry[findInterval(optimized_lch_rf$design[,1], 
+                                        seq(0,1,length.out=11))],
+  
+  min_n = param_df_xgb$min_n[findInterval(optimized_lch_rf$design[,2],
+                                          seq(0,1,length.out=11))]
+)
+
+## Check for Irregular Coverage (Heuristics)
+norm_space_rf <- rf_final_design %>%
+  mutate(across(everything(),rescale))
+dist_matrix <- dist(as.matrix(norm_space_rf))
+cv_dist_rf <- sd(dist_matrix) / mean(dist_matrix)  # 0.456328
+
+## Prepare Warm-Start Initial Set
+
+## Set Up Bayesian Control Parameters
+
+## Run tune_bayes()
+
 
 ## Finalize the Models
 cubist_model_finalized <- cubist_model %>% finalize_model(best_cubist_model)
@@ -525,13 +756,8 @@ rf_ibp_low <- predict_parts(
   new_observation = low_cal,
   type = "break_down_interactions")
 
-# Plot the results
-  
-## LIME
+rf_ibp_low_p <- plot(rf_ibp_low)
 
-## SHAP
-
-## CP
 
 
 
