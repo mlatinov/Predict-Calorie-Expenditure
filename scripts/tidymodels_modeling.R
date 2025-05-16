@@ -330,8 +330,8 @@ param_ranges_cubist <- purrr::map(cubist_param_space$object, function(x) {
 
 # Convert the list to a data frame with sequences
 param_df_cubist <- data.frame(
-  committees = seq(param_ranges_cubist[[1]][1], param_ranges_cubist[[1]][2], length.out = 10),
-  neighbors = seq(param_ranges_cubist[[2]][1], param_ranges_cubist[[2]][2], length.out = 10),
+  committees = as.integer(seq(param_ranges_cubist[[1]][1], param_ranges_cubist[[1]][2], length.out = 10)),
+  neighbors = as.integer(seq(param_ranges_cubist[[2]][1], param_ranges_cubist[[2]][2], length.out = 10)),
   max_rules = seq(param_ranges_cubist[[3]][1], param_ranges_cubist[[3]][2], length.out = 10)
 )
 
@@ -344,7 +344,7 @@ dist_matrix <- dist(as.matrix(param_df_cubist))
 cv_dist<- sd(dist_matrix) / mean(dist_matrix) # 0.6098367
 
 # LCH design
-lch_cubust_design <- lhsDesign(n = 30, dimension = 3, randomized = TRUE,seed = 123)$design
+lch_cubust_design <- lhsDesign(n = 20, dimension = 3, randomized = TRUE,seed = 123)$design
 
 # Simulated annealing (SA) routine for Latin Hypercube Sample (LHS) optimization 
 optimized_lch_cubist <- maximinSA_LHS(
@@ -359,9 +359,11 @@ cubist_final_design <- data.frame(
   committees = param_df_cubist$committees[cut(optimized_lch_cubist$design[,1], 
                                        breaks = seq(0,1,length=11), 
                                        labels = FALSE)],
+  
   neighbors = param_df_cubist$neighbors[cut(optimized_lch_cubist$design[,2], 
                                      breaks = seq(0,1,length=11), 
                                      labels = FALSE)],
+  
   max_rules = param_df_cubist$max_rules[cut(optimized_lch_cubist$design[,3], 
                                      breaks = seq(0,1,length=11), 
                                      labels = FALSE)]
@@ -369,7 +371,7 @@ cubist_final_design <- data.frame(
 
 # XGB 
 
-# # Initial adaptive ranges from the best configurations
+# Initial adaptive ranges from the best configurations
 xgb_initial_param_space <- parameters(
   
   # Feature selection
@@ -421,12 +423,12 @@ xgb_param_ranges <- purrr::map(xgb_initial_param_space$object,function(x){
 # Convert the list to a data frame with sequences
 param_df_xgb <- data.frame(
   mtry = seq(xgb_param_ranges[[1]][1], xgb_param_ranges[[1]][2], length.out = 10),
-  trees = seq(xgb_param_ranges[[2]][1], xgb_param_ranges[[2]][2], length.out = 10),
-  min_n = seq(xgb_param_ranges[[3]][1], xgb_param_ranges[[3]][2], length.out = 10),
-  tree_depth = seq(xgb_param_ranges[[4]][1], xgb_param_ranges[[4]][2], length.out = 10),
+  trees = as.integer(seq(xgb_param_ranges[[2]][1], xgb_param_ranges[[2]][2], length.out = 10)),
+  min_n = as.integer(seq(xgb_param_ranges[[3]][1], xgb_param_ranges[[3]][2], length.out = 10)),
+  tree_depth =  as.integer(seq(xgb_param_ranges[[4]][1], xgb_param_ranges[[4]][2], length.out = 10)),
   learn_rate = 10^seq(xgb_param_ranges[[5]][1], xgb_param_ranges[[5]][2], length.out = 10),
   loss_reduction = 10^seq(xgb_param_ranges[[6]][1], xgb_param_ranges[[6]][2], length.out = 10),
-  sample_prop = seq(xgb_param_ranges[[7]][1], xgb_param_ranges[[7]][2], length.out = 10)
+  sample_prop = as.integer(seq(xgb_param_ranges[[7]][1], xgb_param_ranges[[7]][2], length.out = 10))
 )
 
 # Create normalized parameter space
@@ -435,12 +437,12 @@ norm_space_xgb <- param_df_xgb %>%
 
 # Check for Irregular Coverage (Heuristics)
 dist_matrix <- dist(as.matrix(norm_space_xgb))
-cv_dist_xgb <- sd(dist_matrix) / mean(dist_matrix) #  0.1519956
+cv_dist_xgb <- sd(dist_matrix) / mean(dist_matrix)
 
 #  Generate initial LHS design 
 lhc_xgb_initial <- lhsDesign(n = 50,dimension = 7,randomized = TRUE,seed = 123)$design
 
-# Run maximin optimization 
+# Run max_min optimization 
 optimized_lch_xgb <- maximinSA_LHS(
   design =lhc_xgb_initial,
   T0=20,                      # The initial temperature of the SA algorithm
@@ -448,7 +450,7 @@ optimized_lch_xgb <- maximinSA_LHS(
   it=2000,                    # The number of iterations
   profile="GEOM_MORRIS")
   
-# Map the optimized maxmin LHC 
+# Map the optimized max_min LHC 
 xgb_final_design <- data.frame(
   mtry = param_df_xgb$mtry[findInterval(optimized_lch_xgb$design[,1], 
                                         seq(0,1,length.out=11))],
@@ -476,7 +478,7 @@ xgb_final_design <- data.frame(
 norm_space_xgb <- xgb_final_design %>%
   mutate(across(everything(),rescale))
 dist_matrix <- dist(as.matrix(norm_space_xgb))
-cv_dist_xgb <- sd(dist_matrix) / mean(dist_matrix) # 0.1869027
+cv_dist_xgb <- sd(dist_matrix) / mean(dist_matrix) # 0.2118277
 
 ## Random Forest 
 
@@ -509,7 +511,7 @@ dist_matrix <- dist(as.matrix(norm_space_rf))
 cv_dist_rf <- sd(dist_matrix) / mean(dist_matrix) # 0.6098367
 
 #  Generate initial LHS design 
-lhc_rf_initial <- lhsDesign(n = 50,dimension = 2,randomized = TRUE,seed = 123)$design
+lhc_rf_initial <- lhsDesign(n = 20,dimension = 2,randomized = TRUE,seed = 123)$design
 
 # Run maximin optimization 
 optimized_lch_rf <- maximinSA_LHS(
@@ -534,35 +536,130 @@ norm_space_rf <- rf_final_design %>%
 dist_matrix <- dist(as.matrix(norm_space_rf))
 cv_dist_rf <- sd(dist_matrix) / mean(dist_matrix)  # 0.456328
 
-## Prepare Warm-Start Initial Set
 
-## Set Up Bayesian Control Parameters
-
-## Run tune_bayes()
-
-
-## Finalize the Models
-cubist_model_finalized <- cubist_model %>% finalize_model(best_cubist_model)
-xgb_model_finalized <- xgb_model %>% finalize_model(best_xgb_model)
-random_forest_finalized <- ranger_model %>% finalize_model(best_random_forest)
+#### MBO ####
 
 ## Create Workflows
 cubist_model_workflow <- workflow() %>%
-  add_model(cubist_model_finalized) %>%
+  add_model(cubist_model) %>%
   add_recipe(recipe_eng)
 
 xgb_model_workflow <- workflow() %>%
-  add_model(xgb_model_finalized) %>%
+  add_model(xgb_model) %>%
   add_recipe(recipe_eng)
 
 random_forest_workflow <- workflow() %>%
-  add_model(random_forest_finalized) %>%
+  add_model(ranger_model) %>%
   add_recipe(recipe_eng)
+
+
+# Initial with tune grid()
+rf_initial <- tune_grid(
+  object = random_forest_workflow,
+  resamples = vfold_cv(data = validation_data,v = 5),
+  grid = rf_final_design,
+  metrics =custom_rmsle,
+  control = control_grid(verbose = TRUE,save_pred = TRUE)
+)
+
+xgb_initial <- tune_grid(
+  object = xgb_model_workflow,
+  resamples = vfold_cv(data = validation_data,v = 5),
+  grid = xgb_final_design,metrics = custom_rmsle,
+  control = control_grid(verbose = TRUE,save_pred = TRUE)
+)
+
+cubist_initial <- tune_grid(
+  object = cubist_model_workflow,
+  resamples = vfold_cv(data = validation_data,v = 5),
+  grid = cubist_final_design,
+  metrics = custom_rmsle,
+  control = control_grid(verbose = TRUE,save_pred = TRUE)
+)
+
+## Set Up Bayesian Control Parameters
+bayes_control <- control_bayes(
+  verbose = TRUE,
+  verbose_iter = TRUE,
+  no_improve = 15,
+  save_pred = TRUE,
+  save_workflow = TRUE,
+  seed = 123
+)
+
+# Resamlpes 
+resamples <- vfold_cv(data = validation_data,v = 5)
+
+# Param_info 
+rf_params_info <- parameters(
+  mtry(range = range(rf_final_design$mtry)),
+  min_n(range = range(rf_final_design$min_n))
+)
+
+xgb_param_info <- parameters(
+  mtry(range = range(xgb_final_design$mtry)),
+  min_n(range = range(xgb_final_design$min_n)),
+  tree_depth(range = range(xgb_final_design$tree_depth)),
+  learn_rate(range = range(xgb_final_design$learn_rate)),
+  loss_reduction(range = range(xgb_final_design$loss_reduction)),
+  sample_size(range = range(xgb_final_design$sample_size))
+)
+
+cubist_param_info <- parameters(
+  committees(range = range(cubist_final_design$committees)),
+  neighbors(range = range(cubist_final_design$neighbors)),
+  max_rules(range = range(cubist_final_design$max_rules))
+)
+
+## Run tune_bayes()
+
+bayes_rf <- tune_bayes(
+  object = random_forest_workflow,
+  resamples = resamples,
+  iter = 30,
+  param_info = rf_params_info,
+  initial = rf_initial,
+  metrics = custom_rmsle,
+  control = bayes_control
+)
+
+bayes_xgb <- tune_bayes(
+  object = xgb_model_workflow,
+  resamples = resamples,
+  iter = 50,
+  param_info = xgb_param_info,
+  initial = xgb_initial,
+  metrics = custom_rmsle,
+  control = bayes_control
+)
+
+bayes_cubist <- tune_bayes(
+  object = cubist_model_workflow,
+  resamples = resamples,
+  iter = 30,
+  param_info = cubist_param_info,
+  initial = cubist_initial,
+  metrics = custom_rmsle,
+  control = bayes_control
+)
+  
+## Viz the results
+
+## Select best params from MBO
+
+
+## Finalize the workflows
+
 
 ## Fit the models
 cubist_model_fit <- fit(cubist_model_workflow,data = train_data)
 xgb_model_fit <- fit(xgb_model_workflow,data = train_data)
 random_forest_fit <- fit(random_forest_workflow,data = train_data)
+
+## Predict on the test data 
+
+
+#### Champion–Challenger analysis ####
 
 # Preproc the data 
 final_recipe <- prep(recipe_eng, training = train_data)
@@ -599,8 +696,6 @@ random_forest_explainer <- DALEX::explain(
   y = train_processed$Calories,
   label = "Random Forest"
 )
-
-#### Champion–Challenger analysis ####
 
 # Define DALEX custom loss function
 rmsle_loss <- function(y_true, y_pred) {
@@ -757,6 +852,17 @@ rf_ibp_low <- predict_parts(
   type = "break_down_interactions")
 
 rf_ibp_low_p <- plot(rf_ibp_low)
+
+##### Finalize the Models ####
+
+## Fit the models on the entire data 
+
+## Predict on the test_set
+
+## Write a csv for  kaggle
+
+
+
 
 
 
