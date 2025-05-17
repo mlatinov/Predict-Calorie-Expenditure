@@ -376,7 +376,7 @@ xgb_initial_param_space <- parameters(
   
   # Feature selection
   mtry(range = c(
-    max(1, floor(best_xgb_model$mtry* 0.5)),  # 50% below
+    max(1, floor(best_xgb_model$mtry* 0.5)),   # 50% below
     min(best_xgb_model$mtry * 2, 15)           # 100% above, max 15
   )),
   
@@ -409,7 +409,7 @@ xgb_initial_param_space <- parameters(
   
   # Sampling
   sample_prop(range = c(
-    max(0.1, best_xgb_model$sample_size - 0.1), # -0.1 absolute
+    max(0.1, best_xgb_model$sample_size), 
     min(0.9, best_xgb_model$sample_size + 0.2)  # +0.2 absolute
   ))
 )
@@ -428,7 +428,7 @@ param_df_xgb <- data.frame(
   tree_depth =  as.integer(seq(xgb_param_ranges[[4]][1], xgb_param_ranges[[4]][2], length.out = 10)),
   learn_rate = 10^seq(xgb_param_ranges[[5]][1], xgb_param_ranges[[5]][2], length.out = 10),
   loss_reduction = 10^seq(xgb_param_ranges[[6]][1], xgb_param_ranges[[6]][2], length.out = 10),
-  sample_prop = as.integer(seq(xgb_param_ranges[[7]][1], xgb_param_ranges[[7]][2], length.out = 10))
+  sample_prop = seq(xgb_param_ranges[[7]][1], xgb_param_ranges[[7]][2], length.out = 10)
 )
 
 # Create normalized parameter space
@@ -448,7 +448,8 @@ optimized_lch_xgb <- maximinSA_LHS(
   T0=20,                      # The initial temperature of the SA algorithm
   c=0.95,                     # A constant parameter regulating how the temperature goes down
   it=2000,                    # The number of iterations
-  profile="GEOM_MORRIS")
+  profile="GEOM_MORRIS"
+)
   
 # Map the optimized max_min LHC 
 xgb_final_design <- data.frame(
@@ -470,7 +471,7 @@ xgb_final_design <- data.frame(
   loss_reduction = param_df_xgb$loss_reduction[findInterval(optimized_lch_xgb$design[,6],
                                                             seq(0,1,length.out=11))],
   
-  sample_size = param_df_xgb$sample_prop[findInterval(optimized_lch_xgb$design[,7],
+  sample_prop = param_df_xgb$sample_prop[findInterval(optimized_lch_xgb$design[,7],
                                                       seq(0,1,length.out=11))]
 )
 
@@ -565,7 +566,8 @@ rf_initial <- tune_grid(
 xgb_initial <- tune_grid(
   object = xgb_model_workflow,
   resamples = vfold_cv(data = validation_data,v = 5),
-  grid = xgb_final_design,metrics = custom_rmsle,
+  grid = xgb_final_design,
+  metrics = custom_rmsle,
   control = control_grid(verbose = TRUE,save_pred = TRUE)
 )
 
