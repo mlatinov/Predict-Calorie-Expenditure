@@ -330,9 +330,9 @@ param_ranges_cubist <- purrr::map(cubist_param_space$object, function(x) {
 
 # Convert the list to a data frame with sequences
 param_df_cubist <- data.frame(
-  committees = as.integer(seq(param_ranges_cubist[[1]][1], param_ranges_cubist[[1]][2], length.out = 10)),
-  neighbors = as.integer(seq(param_ranges_cubist[[2]][1], param_ranges_cubist[[2]][2], length.out = 10)),
-  max_rules = seq(param_ranges_cubist[[3]][1], param_ranges_cubist[[3]][2], length.out = 10)
+  committees = as.integer(seq(param_ranges_cubist[[1]][1], param_ranges_cubist[[1]][2], length.out = 20)),
+  neighbors = as.integer(seq(param_ranges_cubist[[2]][1], param_ranges_cubist[[2]][2], length.out = 20)),
+  max_rules = as.integer(seq(param_ranges_cubist[[3]][1], param_ranges_cubist[[3]][2], length.out = 20))
 )
 
 # Normalize the space (rescale between 0 and 1)
@@ -357,21 +357,32 @@ optimized_lch_cubist <- maximinSA_LHS(
 # Map the design into the params
 cubist_final_design <- data.frame(
   committees = param_df_cubist$committees[cut(optimized_lch_cubist$design[,1], 
-                                       breaks = seq(0,1,length=11), 
+                                       breaks = seq(0,1,length=21), 
                                        labels = FALSE)],
   
   neighbors = param_df_cubist$neighbors[cut(optimized_lch_cubist$design[,2], 
-                                     breaks = seq(0,1,length=11), 
+                                     breaks = seq(0,1,length=21), 
                                      labels = FALSE)],
   
   max_rules = param_df_cubist$max_rules[cut(optimized_lch_cubist$design[,3], 
-                                     breaks = seq(0,1,length=11), 
+                                     breaks = seq(0,1,length=21), 
                                      labels = FALSE)]
 )
 
 # XGB 
 
 # Initial adaptive ranges from the best configurations
+
+# Sampling parameter with correct id for xgboost
+sample_size_param <- sample_prop(
+  range = c(
+    max(0.1, best_xgb_model$sample_size), 
+    min(0.9, best_xgb_model$sample_size + 0.2)
+  )
+)
+sample_size_param$id <- "sample_size"
+
+
 xgb_initial_param_space <- parameters(
   
   # Feature selection
@@ -408,12 +419,9 @@ xgb_initial_param_space <- parameters(
   ), trans = log10_trans()),
   
   # Sampling
-  sample_prop(range = c(
-    max(0.1, best_xgb_model$sample_size), 
-    min(0.9, best_xgb_model$sample_size + 0.2)  # +0.2 absolute
-  ))
+  sample_size_param
 )
-  
+
 # Get the numeric ranges for each parameter
 xgb_param_ranges <- purrr::map(xgb_initial_param_space$object,function(x){
   rng <- range_get(x)
@@ -422,14 +430,15 @@ xgb_param_ranges <- purrr::map(xgb_initial_param_space$object,function(x){
 
 # Convert the list to a data frame with sequences
 param_df_xgb <- data.frame(
-  mtry = seq(xgb_param_ranges[[1]][1], xgb_param_ranges[[1]][2], length.out = 10),
-  trees = as.integer(seq(xgb_param_ranges[[2]][1], xgb_param_ranges[[2]][2], length.out = 10)),
-  min_n = as.integer(seq(xgb_param_ranges[[3]][1], xgb_param_ranges[[3]][2], length.out = 10)),
-  tree_depth =  as.integer(seq(xgb_param_ranges[[4]][1], xgb_param_ranges[[4]][2], length.out = 10)),
-  learn_rate = 10^seq(xgb_param_ranges[[5]][1], xgb_param_ranges[[5]][2], length.out = 10),
-  loss_reduction = 10^seq(xgb_param_ranges[[6]][1], xgb_param_ranges[[6]][2], length.out = 10),
-  sample_prop = seq(xgb_param_ranges[[7]][1], xgb_param_ranges[[7]][2], length.out = 10)
+  mtry = as.integer(seq(xgb_param_ranges[[1]][1], xgb_param_ranges[[1]][2], length.out = 50)),
+  trees = as.integer(seq(xgb_param_ranges[[2]][1], xgb_param_ranges[[2]][2], length.out = 50)),
+  min_n = as.integer(seq(xgb_param_ranges[[3]][1], xgb_param_ranges[[3]][2], length.out = 50)),
+  tree_depth = as.integer(seq(xgb_param_ranges[[4]][1], xgb_param_ranges[[4]][2], length.out = 50)),
+  learn_rate = seq(xgb_param_ranges[[5]][1], xgb_param_ranges[[5]][2], length.out = 50),
+  loss_reduction = seq(xgb_param_ranges[[6]][1], xgb_param_ranges[[6]][2], length.out = 50),
+  sample_size = seq(xgb_param_ranges[[7]][1], xgb_param_ranges[[7]][2], length.out = 50)
 )
+
 
 # Create normalized parameter space
 norm_space_xgb <- param_df_xgb %>%
@@ -453,26 +462,19 @@ optimized_lch_xgb <- maximinSA_LHS(
   
 # Map the optimized max_min LHC 
 xgb_final_design <- data.frame(
-  mtry = param_df_xgb$mtry[findInterval(optimized_lch_xgb$design[,1], 
-                                        seq(0,1,length.out=11))],
+  mtry = param_df_xgb$mtry[findInterval(optimized_lch_xgb$design[,1], seq(0,1,length.out=50))],
   
-  trees = param_df_xgb$trees[findInterval(optimized_lch_xgb$design[,2],
-                                          seq(0,1,length.out=11))],
+  trees = param_df_xgb$trees[findInterval(optimized_lch_xgb$design[,2], seq(0,1,length.out=50))],
   
-  min_n = param_df_xgb$min_n[findInterval(optimized_lch_xgb$design[,3],
-                                          seq(0,1,length.out=11))],
+  min_n = param_df_xgb$min_n[findInterval(optimized_lch_xgb$design[,3], seq(0,1,length.out=50))],
   
-  tree_depth = param_df_xgb$tree_depth[findInterval(optimized_lch_xgb$design[,4],
-                                                    seq(0,1,length.out=11))],
+  tree_depth = param_df_xgb$tree_depth[findInterval(optimized_lch_xgb$design[,4], seq(0,1,length.out=50))],
   
-  learn_rate = param_df_xgb$learn_rate[findInterval(optimized_lch_xgb$design[,5],
-                                                    seq(0,1,length.out=11))],
+  learn_rate = param_df_xgb$learn_rate[findInterval(optimized_lch_xgb$design[,5], seq(0,1,length.out=50))],
   
-  loss_reduction = param_df_xgb$loss_reduction[findInterval(optimized_lch_xgb$design[,6],
-                                                            seq(0,1,length.out=11))],
+  loss_reduction = param_df_xgb$loss_reduction[findInterval(optimized_lch_xgb$design[,6], seq(0,1,length.out=50))],
   
-  sample_prop = param_df_xgb$sample_prop[findInterval(optimized_lch_xgb$design[,7],
-                                                      seq(0,1,length.out=11))]
+  sample_size = param_df_xgb$sample_size[findInterval(optimized_lch_xgb$design[,7], seq(0,1,length.out=50))]
 )
 
 ## Check for Irregular Coverage (Heuristics)
@@ -501,8 +503,8 @@ rf_ranges <- map(rf_param_space$object, ~ as.numeric(range_get(.x)))
 
 # Convert the list to a data frame with sequences
 param_df_rf <- data.frame(
-  mtry = seq(rf_ranges[[1]][1], rf_ranges[[1]][2], length.out = 10),
-  min_n = seq(rf_ranges[[2]][1], rf_ranges[[2]][2], length.out = 10)
+  mtry = as.integer(seq(rf_ranges[[1]][1], rf_ranges[[1]][2], length.out = 20)),
+  min_n = as.integer(seq(rf_ranges[[2]][1], rf_ranges[[2]][2], length.out = 20))
 )
 
 ## Check for Irregular Coverage (Heuristics)
@@ -524,11 +526,11 @@ optimized_lch_rf <- maximinSA_LHS(
 
 # Map the design into the params
 rf_final_design <- data.frame(
-  mtry = param_df_xgb$mtry[findInterval(optimized_lch_rf$design[,1], 
-                                        seq(0,1,length.out=11))],
+  mtry = param_df_rf$mtry[findInterval(optimized_lch_rf$design[,1], 
+                                        seq(0,1,length.out=21))],
   
-  min_n = param_df_xgb$min_n[findInterval(optimized_lch_rf$design[,2],
-                                          seq(0,1,length.out=11))]
+  min_n = param_df_rf$min_n[findInterval(optimized_lch_rf$design[,2],
+                                          seq(0,1,length.out=21))]
 )
 
 ## Check for Irregular Coverage (Heuristics)
@@ -598,13 +600,16 @@ rf_params_info <- parameters(
   min_n(range = range(rf_final_design$min_n))
 )
 
+sample_size_param <- sample_prop(range = range(xgb_final_design$sample_size))
+sample_size_param$id <- "sample_size"
+
 xgb_param_info <- parameters(
   mtry(range = range(xgb_final_design$mtry)),
   min_n(range = range(xgb_final_design$min_n)),
   tree_depth(range = range(xgb_final_design$tree_depth)),
-  learn_rate(range = range(xgb_final_design$learn_rate)),
+  learn_rate(range = pmax(pmin(range(xgb_final_design$learn_rate), 0.3), 1e-5)),
   loss_reduction(range = range(xgb_final_design$loss_reduction)),
-  sample_size(range = range(xgb_final_design$sample_size))
+  sample_size_param
 )
 
 cubist_param_info <- parameters(
@@ -629,8 +634,8 @@ bayes_xgb <- tune_bayes(
   object = xgb_model_workflow,
   resamples = resamples,
   iter = 50,
-  param_info = xgb_param_info,
   initial = xgb_initial,
+  param_info = xgb_param_info,
   metrics = custom_rmsle,
   control = bayes_control
 )
@@ -644,14 +649,17 @@ bayes_cubist <- tune_bayes(
   metrics = custom_rmsle,
   control = bayes_control
 )
-  
-## Viz the results
 
 ## Select best params from MBO
 
+best_bayes_rf <- bayes_rf %>% select_best()
+best_bayes_cubist <- bayes_cubist %>% select_best()
+best_xbg_tune_grid <- xgb_initial %>% select_best()
 
 ## Finalize the workflows
-
+cubist_model_workflow <- cubist_model_workflow %>% finalize_workflow(best_bayes_cubist)
+xgb_model_workflow <- xgb_model_workflow %>% finalize_workflow(best_xbg_tune_grid)
+random_forest_workflow <- random_forest_workflow %>% finalize_workflow(best_bayes_rf)
 
 ## Fit the models
 cubist_model_fit <- fit(cubist_model_workflow,data = train_data)
@@ -659,7 +667,17 @@ xgb_model_fit <- fit(xgb_model_workflow,data = train_data)
 random_forest_fit <- fit(random_forest_workflow,data = train_data)
 
 ## Predict on the test data 
-
+rmsle_results <- test_data %>% 
+  mutate(
+    cubist_pred = predict(cubist_model_fit, new_data = test_data)$.pred,
+    xgb_pred = predict(xgb_model_fit, new_data = test_data)$.pred,
+    random_forest_pred = predict(random_forest_fit, new_data = test_data)$.pred
+  ) %>%
+  summarize(
+    rmsle_cubist = rmsle(estimate = cubist_pred,truth = Calories,data = test_data),
+    rmsle_xgb = rmsle(estimate = xgb_pred,truth = Calories,data = test_data),
+    rmsle_rf = rmsle(estimate = random_forest_pred,truth = Calories,data = test_data)
+    )
 
 #### Champion–Challenger analysis ####
 
@@ -855,13 +873,15 @@ rf_ibp_low <- predict_parts(
 
 rf_ibp_low_p <- plot(rf_ibp_low)
 
-##### Finalize the Models ####
+## Predict on the kaggle test_set
+test_kaggle <- read_csv("data/test.csv")
 
-## Fit the models on the entire data 
+test_kaggle$Calories <- predict(random_forest_fit,new_data = test_kaggle)$.pred
 
-## Predict on the test_set
-
-## Write a csv for  kaggle
+## Write a csv for kaggle
+test_kaggle %>%
+  select(id,Calories)%>%
+  write.csv(file = "kaggle_predictions_rf.csv",row.names = FALSE)
 
 
 
